@@ -93,15 +93,15 @@ class TestTodoApp(TestCase):
     def test_app(self):
         # Check the collection for user is initially empty.
         user_id = uuid4()
-        collection = self.app.get_todo_list_collection(user_id)
-        self.assertEqual(collection, [])
+        todo_list_ids = self.app.get_todo_list_ids(user_id)
+        self.assertEqual(todo_list_ids, [])
 
         # Start a new list.
         todo_list_id = self.app.start_todo_list(user_id)
 
         # Check the collection for user has one list.
-        collection = self.app.get_todo_list_collection(user_id)
-        self.assertEqual(len(collection), 1)
+        todo_list_ids = self.app.get_todo_list_ids(user_id)
+        self.assertEqual(len(todo_list_ids), 1)
 
         # Check the list has no items.
         self.assertEqual(self.app.get_todo_items(todo_list_id), ())
@@ -122,7 +122,7 @@ class TestTodoApp(TestCase):
         self.app.discard_todo_item(todo_list_id=todo_list_id, index=0)
         self.assertEqual(self.app.get_todo_items(todo_list_id), ())
 
-        # Discard the list, and get the collection, and check the collection has no items.
+        # Discard the list, and check there are no list IDs for the user.
         self.app.discard_todo_list(todo_list_id=todo_list_id)
-        collection = self.app.get_todo_list_collection(user_id)
-        self.assertEqual(len(collection), 0)
+        todo_list_ids = self.app.get_todo_list_ids(user_id)
+        self.assertEqual(len(todo_list_ids), 0)
