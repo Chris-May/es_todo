@@ -78,14 +78,6 @@ also be possible to have an event sourced collection of todo lists for each user
 
 
 class TestTodoApp(TestCase):
-    """
-    , and check the collection
-has one list. Then you could get the list from the repository, and check it has no items. Then you could add an item
-to the list. Then you could get the list again, and check it has one item. Then you could update the item. Then you
-could get the list and see it has the updated item. Then you could discard the item, and check by getting the list
-and checking it has no items. Then you could discard the list, and get the collection, and check the collection has
-no items.
-    """
 
     def setUp(self):
         settings = SQLAlchemySettings(uri='sqlite:///:memory:')
@@ -113,3 +105,13 @@ no items.
         collection = self.app.get_todo_list_collection(user_id)
         self.assertEqual(len(collection), 1)
 
+        # Then you could get the list from the repository, and check it has no items.
+        todo_list = self.app.todo_lists[todo_list.id]
+        self.assertIsInstance(todo_list, TodoList)
+
+        # Then you could add an item to the list.
+        # Then you could get the list again, and check it has one item.
+        # Then you could update the item.
+        # Then you could get the list and see it has the updated item.
+        # Then you could discard the item, and check by getting the list and checking it has no items.
+        # Then you could discard the list, and get the collection, and check the collection has no items.
