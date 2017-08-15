@@ -12,8 +12,12 @@ from eventsourcing.infrastructure.sqlalchemy.activerecords import IntegerSequenc
     SQLAlchemyActiveRecordStrategy
 
 
+USER_LIST_COLLECTION_NS = UUID('af3e9b7b-22e0-4758-9b0b-c90949d4838e')
+
+
 class TodoApp(ApplicationWithPersistencePolicies):
     def __init__(self, session, **kwargs):
+        # Construct infrastructure objects for storing events with SQLAlchemy.
         entity_active_record_strategy = SQLAlchemyActiveRecordStrategy(
             active_record_class=IntegerSequencedItemRecord,
             session=session,
@@ -22,21 +26,22 @@ class TodoApp(ApplicationWithPersistencePolicies):
             entity_active_record_strategy=entity_active_record_strategy,
             **kwargs
         )
+        # Construct objects for this application.
         self.todo_lists = EventSourcedRepository(
             mutator=TodoList._mutate,
             event_store=self.entity_event_store
         )
-        self.todo_list_collections = CollectionRepository(
+        self.user_list_collections = CollectionRepository(
             event_store=self.entity_event_store
         )
         self.projection_policy = ProjectionPolicy(
-            collection_repo=self.todo_list_collections
+            user_list_collections=self.user_list_collections
         )
 
     def get_todo_list_ids(self, user_id):
         try:
-            collection_id = make_collection_id(user_id)
-            collection = self.todo_list_collections[collection_id]
+            collection_id = make_user_list_collection_id(user_id)
+            collection = self.user_list_collections[collection_id]
             assert isinstance(collection, Collection)
             return collection.items
         except KeyError:
@@ -226,13 +231,13 @@ def _(self, event):
 
 class ProjectionPolicy(object):
     """
-    Updates the view of all todo list IDs for a user.
+    Updates the user collection whenever lists are created or discarded.
     """
 
-    def __init__(self, collection_repo):
+    def __init__(self, user_list_collections):
         subscribe(self.add_list_to_collection, self.is_list_started)
         subscribe(self.remove_list_from_collection, self.is_list_discarded)
-        self.collection_repo = collection_repo
+        self.user_list_collections = user_list_collections
 
     def is_list_started(self, event):
         if isinstance(event, (list, tuple)):
@@ -247,9 +252,9 @@ class ProjectionPolicy(object):
     def add_list_to_collection(self, event):
         assert isinstance(event, TodoList.Started)
         user_id = event.user_id
-        collection_id = make_collection_id(user_id)
+        collection_id = make_user_list_collection_id(user_id)
         try:
-            collection = self.collection_repo[collection_id]
+            collection = self.user_list_collections[collection_id]
         except KeyError:
             collection = register_new_collection(collection_id=collection_id)
 
@@ -262,9 +267,9 @@ class ProjectionPolicy(object):
 
         assert isinstance(event, TodoList.Discarded), event
         user_id = event.user_id
-        collection_id = make_collection_id(user_id)
+        collection_id = make_user_list_collection_id(user_id)
         try:
-            collection = self.collection_repo[collection_id]
+            collection = self.user_list_collections[collection_id]
         except KeyError:
             pass
         else:
@@ -275,5 +280,5 @@ class ProjectionPolicy(object):
         unsubscribe(self.remove_list_from_collection, self.is_list_discarded)
 
 
-def make_collection_id(user_id, collection_ns=UUID('af3e9b7b-22e0-4758-9b0b-c90949d4838e')):
+def make_user_list_collection_id(user_id, collection_ns=USER_LIST_COLLECTION_NS):
     return uuid5(collection_ns, user_id.bytes)
