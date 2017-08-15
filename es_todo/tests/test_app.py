@@ -3,9 +3,9 @@ from unittest.case import TestCase
 from uuid import uuid4
 
 from eventsourcing.infrastructure.sqlalchemy.activerecords import IntegerSequencedItemRecord
-from eventsourcing.infrastructure.sqlalchemy.datastore import SQLAlchemySettings, SQLAlchemyDatastore
+from eventsourcing.infrastructure.sqlalchemy.datastore import SQLAlchemyDatastore, SQLAlchemySettings
 
-from es_todo.application.base import TodoApp, TodoList
+from es_todo.application.base import TodoApp
 
 """
 I might start by identifying some domain events - things that might happen in the domain of "todo lists":
@@ -78,7 +78,6 @@ also be possible to have an event sourced collection of todo lists for each user
 
 
 class TestTodoApp(TestCase):
-
     def setUp(self):
         settings = SQLAlchemySettings(uri='sqlite:///:memory:')
         datastore = SQLAlchemyDatastore(
@@ -91,27 +90,39 @@ class TestTodoApp(TestCase):
 
         self.app = TodoApp(session=datastore.session)
 
-    def test(self):
+    def test_app(self):
         # Check the collection for user is initially empty.
         user_id = uuid4()
         collection = self.app.get_todo_list_collection(user_id)
         self.assertEqual(collection, [])
 
-        # Then you could start a new list.
-        todo_list = self.app.start_todo_list(user_id)
-        self.assertIsInstance(todo_list, TodoList)
+        # Start a new list.
+        todo_list_id = self.app.start_todo_list(user_id)
 
         # Check the collection for user has one list.
         collection = self.app.get_todo_list_collection(user_id)
         self.assertEqual(len(collection), 1)
 
-        # Then you could get the list from the repository, and check it has no items.
-        todo_list = self.app.todo_lists[todo_list.id]
-        self.assertIsInstance(todo_list, TodoList)
+        # Check the list has no items.
+        self.assertEqual(self.app.get_todo_items(todo_list_id), ())
 
-        # Then you could add an item to the list.
-        # Then you could get the list again, and check it has one item.
-        # Then you could update the item.
-        # Then you could get the list and see it has the updated item.
-        # Then you could discard the item, and check by getting the list and checking it has no items.
-        # Then you could discard the list, and get the collection, and check the collection has no items.
+        # Add an item to the list.
+        self.app.add_todo_item(todo_list_id=todo_list_id, item='item1')
+
+        # Get the list again, and check it has one item.
+        self.assertEqual(self.app.get_todo_items(todo_list_id), ('item1',))
+
+        # Update the item.
+        self.app.update_todo_item(todo_list_id=todo_list_id, index=0, item='item1.1')
+
+        # Get the list and see it has the updated item.
+        self.assertEqual(self.app.get_todo_items(todo_list_id), ('item1.1',))
+
+        # Discard the item, and check by getting the list and checking it has no items.
+        self.app.discard_todo_item(todo_list_id=todo_list_id, index=0)
+        self.assertEqual(self.app.get_todo_items(todo_list_id), ())
+
+        # Discard the list, and get the collection, and check the collection has no items.
+        self.app.discard_todo_list(todo_list_id=todo_list_id)
+        collection = self.app.get_todo_list_collection(user_id)
+        self.assertEqual(len(collection), 0)
