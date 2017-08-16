@@ -3,17 +3,18 @@ from uuid import UUID, uuid4, uuid5
 from eventsourcing.application.base import ApplicationWithPersistencePolicies
 from eventsourcing.domain.model.aggregate import AggregateRoot
 from eventsourcing.domain.model.collection import Collection, register_new_collection
-from eventsourcing.domain.model.decorators import mutator
-from eventsourcing.domain.model.entity import mutate_entity
+from eventsourcing.domain.model.entity import WithReflexiveMutator
 from eventsourcing.domain.model.events import publish, subscribe, unsubscribe
 from eventsourcing.infrastructure.eventsourcedrepository import EventSourcedRepository
 from eventsourcing.infrastructure.repositories.collection_repo import CollectionRepository
 from eventsourcing.infrastructure.sqlalchemy.activerecords import IntegerSequencedItemRecord, \
     SQLAlchemyActiveRecordStrategy
 
-
 USER_LIST_COLLECTION_NS = UUID('af3e9b7b-22e0-4758-9b0b-c90949d4838e')
 
+#
+# Application object.
+#
 
 class TodoApp(ApplicationWithPersistencePolicies):
     def __init__(self, session, **kwargs):
@@ -26,7 +27,8 @@ class TodoApp(ApplicationWithPersistencePolicies):
             entity_active_record_strategy=entity_active_record_strategy,
             **kwargs
         )
-        # Construct objects for this application.
+
+        # Construct repositories for this application.
         self.todo_lists = EventSourcedRepository(
             mutator=TodoList._mutate,
             event_store=self.entity_event_store
@@ -34,11 +36,18 @@ class TodoApp(ApplicationWithPersistencePolicies):
         self.user_list_collections = CollectionRepository(
             event_store=self.entity_event_store
         )
-        self.projection_policy = ProjectionPolicy(
+
+        # Construct policies for this application.
+        self.user_list_projection_policy = UserListProjectionPolicy(
             user_list_collections=self.user_list_collections
         )
 
+    #
+    # Application services.
+    #
+
     def get_todo_list_ids(self, user_id):
+        """Returns list of IDs of todo lists for a user."""
         try:
             collection_id = make_user_list_collection_id(user_id)
             collection = self.user_list_collections[collection_id]
@@ -49,56 +58,61 @@ class TodoApp(ApplicationWithPersistencePolicies):
 
     @staticmethod
     def start_todo_list(user_id):
-        # Do some work.
-        todo_list_id = uuid4()
-
-        # Construct event with results of the work.
-        event = TodoList.Started(originator_id=todo_list_id, user_id=user_id)
-
-        # Apply the event to the entity (or aggregate root).
-        entity = TodoList._mutate(event=event)
-
-        # Publish the event.
+        """Starts new todo list for a user."""
+        event = TodoList.Started(originator_id=uuid4(), user_id=user_id)
+        entity = event.mutate(cls=TodoList)
         publish(event)
-
-        # Return something.
         return entity.id
 
     def add_todo_item(self, todo_list_id, item):
+        """Added todo item to a todo list."""
         todo_list = self.todo_lists[todo_list_id]
         assert isinstance(todo_list, TodoList)
         todo_list.add_item(item=item)
         todo_list.save()
 
     def get_todo_items(self, todo_list_id):
+        """Returns a tuple of todo items."""
         todo_list = self.todo_lists[todo_list_id]
         return tuple(todo_list.items)
 
     def update_todo_item(self, todo_list_id, index, item):
+        """Updates a todo item in a list."""
         todo_list = self.todo_lists[todo_list_id]
         todo_list.update_item(index, item)
         todo_list.save()
 
     def discard_todo_item(self, todo_list_id, index):
+        """Discards a todo item in a list."""
         todo_list = self.todo_lists[todo_list_id]
         todo_list.discard_item(index)
         todo_list.save()
 
     def discard_todo_list(self, todo_list_id):
+        """Discards a todo list."""
         todo_list = self.todo_lists[todo_list_id]
         todo_list.discard()
         todo_list.save()
 
     def close(self):
         super(TodoApp, self).close()
-        self.projection_policy.close()
+        self.user_list_projection_policy.close()
 
 
-class TodoList(AggregateRoot):
+#
+# Event-sourced aggregates.
+#
+
+class TodoList(WithReflexiveMutator, AggregateRoot):
+    """Aggregate root for todo list aggregate."""
     def __init__(self, user_id, **kwargs):
         super(TodoList, self).__init__(**kwargs)
         self.user_id = user_id
         self.items = []
+
+    #
+    # Domain events.
+    #
 
     class Event(AggregateRoot.Event):
         """Layer base class."""
@@ -110,6 +124,11 @@ class TodoList(AggregateRoot):
         def user_id(self):
             return self.__dict__['user_id']
 
+        def mutate(self, cls):
+            entity = cls(**self.__dict__)
+            entity.increment_version()
+            return entity
+
     class ItemAdded(Event):
         """Published when an item is added to a list."""
 
@@ -120,6 +139,11 @@ class TodoList(AggregateRoot):
         @property
         def list_id(self):
             return self.__dict__['list_id']
+
+        def mutate(self, entity):
+            entity.items.append(self.item)
+            entity.increment_version()
+            return entity
 
     class ItemUpdated(Event):
         """Published when an item is updated in a list."""
@@ -136,6 +160,11 @@ class TodoList(AggregateRoot):
         def list_id(self):
             return self.__dict__['list_id']
 
+        def mutate(self, entity):
+            entity.items[self.index] = self.item
+            entity.increment_version()
+            return entity
+
     class ItemDiscarded(Event):
         """Published when an item in a list is discarded."""
 
@@ -147,22 +176,39 @@ class TodoList(AggregateRoot):
         def list_id(self):
             return self.__dict__['list_id']
 
+        def mutate(self, entity):
+            entity.items.pop(self.index)
+            entity.increment_version()
+            return entity
+
     class Discarded(Event, AggregateRoot.Discarded):
+        """Published when a list is discarded."""
+
         @property
         def user_id(self):
             return self.__dict__['user_id']
 
+        def mutate(self, entity):
+            entity._is_discarded = True
+            return None
+
+    #
+    # Commands.
+    #
+
     def add_item(self, item):
+        """Adds item."""
         self._apply_and_publish(
-            self.construct_event(
+            self._construct_event(
                 TodoList.ItemAdded,
                 item=item,
             )
         )
 
     def update_item(self, index, item):
+        """Updates item."""
         self._apply_and_publish(
-            self.construct_event(
+            self._construct_event(
                 TodoList.ItemUpdated,
                 index=index,
                 item=item,
@@ -170,74 +216,50 @@ class TodoList(AggregateRoot):
         )
 
     def discard_item(self, index):
+        """Discards item."""
         self._apply_and_publish(
-            self.construct_event(
+            self._construct_event(
                 TodoList.ItemDiscarded,
                 index=index,
             )
         )
 
     def discard(self):
+        """Discards self."""
         self._apply_and_publish(
-            self.construct_event(
+            self._construct_event(
                 TodoList.Discarded,
                 user_id=self.user_id
             )
         )
 
-    def construct_event(self, event_class, **kwargs):
+    def increment_version(self):
+        self._increment_version()
+
+    def _construct_event(self, event_class, **kwargs):
         return event_class(
             originator_id=self.id,
             originator_version=self.version,
             **kwargs
         )
 
-    @classmethod
-    def _mutate(cls, initial=None, event=None):
-        return todo_list_mutator(initial or cls, event)
+#
+# Projections.
+#
 
-
-@mutator
-def todo_list_mutator(initial, event):
-    return mutate_entity(initial, event)
-
-
-@todo_list_mutator.register(TodoList.ItemAdded)
-def _(self, event):
-    assert isinstance(event, TodoList.ItemAdded)
-    assert isinstance(self, TodoList)
-    self.items.append(event.item)
-    self._increment_version()
-    return self
-
-
-@todo_list_mutator.register(TodoList.ItemUpdated)
-def _(self, event):
-    assert isinstance(event, TodoList.ItemUpdated)
-    assert isinstance(self, TodoList)
-    self.items[event.index] = event.item
-    self._increment_version()
-    return self
-
-
-@todo_list_mutator.register(TodoList.ItemDiscarded)
-def _(self, event):
-    assert isinstance(event, TodoList.ItemDiscarded)
-    assert isinstance(self, TodoList)
-    self.items.pop(event.index)
-    self._increment_version()
-    return self
-
-
-class ProjectionPolicy(object):
+class UserListProjectionPolicy(object):
     """
-    Updates the user collection whenever lists are created or discarded.
+    Updates a user list collection whenever a list is created or discarded.
     """
 
     def __init__(self, user_list_collections):
+        self.user_list_collections = user_list_collections
         subscribe(self.add_list_to_collection, self.is_list_started)
         subscribe(self.remove_list_from_collection, self.is_list_discarded)
-        self.user_list_collections = user_list_collections
+
+    def close(self):
+        unsubscribe(self.add_list_to_collection, self.is_list_started)
+        unsubscribe(self.remove_list_from_collection, self.is_list_discarded)
 
     def is_list_started(self, event):
         if isinstance(event, (list, tuple)):
@@ -274,10 +296,6 @@ class ProjectionPolicy(object):
             pass
         else:
             collection.remove_item(event.originator_id)
-
-    def close(self):
-        unsubscribe(self.add_list_to_collection, self.is_list_started)
-        unsubscribe(self.remove_list_from_collection, self.is_list_discarded)
 
 
 def make_user_list_collection_id(user_id, collection_ns=USER_LIST_COLLECTION_NS):
