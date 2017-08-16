@@ -48,13 +48,14 @@ class TodoApp(ApplicationWithPersistencePolicies):
 
     def get_todo_list_ids(self, user_id):
         """Returns list of IDs of todo lists for a user."""
+        collection_id = make_user_list_collection_id(user_id)
         try:
-            collection_id = make_user_list_collection_id(user_id)
             collection = self.user_list_collections[collection_id]
-            assert isinstance(collection, Collection)
-            return collection.items
         except KeyError:
             return []
+        else:
+            assert isinstance(collection, Collection)
+            return collection.items
 
     @staticmethod
     def start_todo_list(user_id):
