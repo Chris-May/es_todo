@@ -101,7 +101,7 @@ def test():
 
     # Check the user has one list.
     todo_list_ids = app.get_todo_list_ids(user_id)
-    assert todo_list_ids == set([todo_list_id])
+    assert todo_list_ids == {todo_list_id}
 
     # Check the list has no items.
     assert app.get_todo_items(todo_list_id) == ()
