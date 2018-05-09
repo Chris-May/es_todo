@@ -1,2 +1,2 @@
-eventsourcing[sqlalchemy]
+eventsourcing[sqlalchemy]==6.0.0
 nose
