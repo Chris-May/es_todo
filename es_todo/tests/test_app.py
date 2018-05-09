@@ -1,7 +1,6 @@
 # -8- coding: utf-8 -*-
 from uuid import uuid4
 
-from eventsourcing.infrastructure.sqlalchemy.activerecords import IntegerSequencedItemRecord
 from eventsourcing.infrastructure.sqlalchemy.datastore import SQLAlchemyDatastore, SQLAlchemySettings
 
 from es_todo.application.base import TodoApp
@@ -77,19 +76,8 @@ also be possible to have an event sourced collection of todo lists for each user
 
 
 def test():
-    # Configure database.
-    settings = SQLAlchemySettings(uri='sqlite:///:memory:')
-
-    # Setup database.
-    datastore = SQLAlchemyDatastore(
-        settings=settings,
-        tables=(IntegerSequencedItemRecord,),
-    )
-    datastore.setup_connection()
-    datastore.setup_tables()
-
     # Construct application.
-    app = TodoApp(session=datastore.session)
+    app = TodoApp()
 
     # Check the user initially has no lists.
     user_id = uuid4()
